@@ -32,6 +32,8 @@ No single database technology satisfies all three goals equally well. This is wh
 
 **What it stores:** One vector per message `(user_id, message_id, vector[1024])` with user-level aggregated embeddings computed periodically.
 
+**Embedding model:** `intfloat/e5-large-v2` — chosen specifically because it outputs exactly **1024 dimensions** as required, runs fully on CPU with no GPU needed, and consistently ranks among the top-performing open-source embedding models on the MTEB benchmark. Models like `all-mpnet-base-v2` only output 768 dimensions and were therefore ruled out.
+
 **Index chosen:** `IVF_FLAT` at prototype scale (exact recall, reasonable speed). At 10M+ users, switch to `HNSW` (graph-based ANN, sub-10 ms at scale).
 
 **Trade-off:** Milvus requires more operational overhead than FAISS (which is a library, not a server). However, Milvus provides persistence, metadata filtering, and a query API that FAISS cannot, making it the right choice for production.
@@ -129,6 +131,8 @@ Every pipeline run emits:
 Every API request emits:
 - `user_id`, cache hit/miss, total response time, and per-stage breakdown (Milvus ms, Neo4j ms, SQLite ms)
 
+A **Streamlit dashboard** (`dashboard.py`) surfaces all of the above visually — pipeline run history, top campaigns by engagement, and a live recommendation demo where any user_id can be queried interactively.
+
 ### Anomaly Detection
 
 The pipeline checks for:
@@ -179,6 +183,6 @@ All services run in a single `docker-compose.yml` for local development:
 | Async Neo4j writes                   | Lower ingestion latency              | Slight lag before graph reflects reality |
 | SQLite as BigQuery mock              | Zero cloud cost in development       | Not identical behaviour at scale       |
 | Redis TTL caching                    | Near-zero API latency on cache hit   | Up to 5 min stale recommendations      |
-| Python DAG over Airflow              | Simple to run, easy to debug         | No built-in retry UI, no DAG visualiser|
+| Airflow DAG (production-ready)       | Retry, scheduling, monitoring UI     | Heavier infra, needs its own DB        |
 | IVF_FLAT Milvus index                | Exact recall, good for small corpus  | Slower than HNSW at 10M+ vectors       |
 | Pydantic validation at ingestion     | Data quality guaranteed downstream   | Small CPU overhead per record          |

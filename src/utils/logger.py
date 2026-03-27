@@ -2,7 +2,12 @@ import logging
 import sys
 import time
 from contextlib import contextmanager
+from pathlib import Path
 from src.utils.config import LOG_LEVEL
+
+# ── Log file location ─────────────────────────────────────────
+LOG_DIR  = Path("logs")
+LOG_FILE = LOG_DIR / "platform.log"
 
 
 class _FlushHandler(logging.StreamHandler):
@@ -14,8 +19,12 @@ class _FlushHandler(logging.StreamHandler):
 
 def get_logger(name: str) -> logging.Logger:
     """
-    Returns a logger that emits structured lines:
-      2024-01-15 12:00:00 | INFO     | pipeline.ingest | message
+    Returns a logger that writes to BOTH:
+      - Console (stdout) with immediate flush
+      - logs/platform.log (rotating, persisted)
+
+    Format:
+      2026-03-27 12:00:00 | INFO     | pipeline.ingest | message
     """
     logger = logging.getLogger(name)
 
@@ -25,22 +34,29 @@ def get_logger(name: str) -> logging.Logger:
     level = getattr(logging, LOG_LEVEL.upper(), logging.INFO)
     logger.setLevel(level)
 
-    # On Windows, open a UTF-8 line-buffered stream directly from stdout's fd.
-    # Falls back to sys.stderr if stdout is not a real file (e.g. IDLE, pytest capture).
+    fmt = logging.Formatter(
+        fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    # ── Handler 1: Console ────────────────────────────────────
     try:
         stream = open(sys.stdout.fileno(), mode="w", encoding="utf-8", buffering=1)
     except Exception:
         stream = sys.stderr
 
-    handler = _FlushHandler(stream)
-    handler.setLevel(level)
+    console_handler = _FlushHandler(stream)
+    console_handler.setLevel(level)
+    console_handler.setFormatter(fmt)
 
-    fmt = logging.Formatter(
-        fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    handler.setFormatter(fmt)
-    logger.addHandler(handler)
+    # ── Handler 2: File ───────────────────────────────────────
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+    file_handler.setLevel(level)
+    file_handler.setFormatter(fmt)
+
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
     logger.propagate = False
 
     return logger

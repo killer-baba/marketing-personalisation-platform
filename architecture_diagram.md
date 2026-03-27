@@ -8,11 +8,11 @@ flowchart TD
     A([🗣️ User Conversation\nuser_id · message · timestamp])
 
     %% ── Orchestration wrapper ──────────────────────────────────
-    subgraph ORCH["⚙️  Pipeline Orchestrator  (Python DAG / Prefect)"]
+    subgraph ORCH["⚙️  Pipeline Orchestrator  (Python DAG / Airflow)"]
         direction TB
 
         B["📥 Ingestion Layer\nSchema validation · Lineage tagging"]
-        C["🧠 Embedding Service\nSentence-Transformers  all-mpnet-base-v2\n1024-dim vectors"]
+        C["🧠 Embedding Service\nintfloat/e5-large-v2\n1024-dim vectors"]
 
         B --> C
     end
@@ -24,7 +24,7 @@ flowchart TD
         direction LR
 
         M["🍃 MongoDB\nRaw text + metadata\n(document store)"]
-        V["⚡ Milvus\nEmbedding vectors\n+ user_id / message_id"]
+        V["⚡ Milvus\n1024-dim embeddings\n+ user_id / message_id"]
         N["🕸️  Neo4j\nUser → Campaign → Intent\ngraph relationships"]
         S["📊 SQLite / BigQuery\nAggregated metrics\nbatch analytics"]
     end
@@ -58,7 +58,7 @@ flowchart TD
         direction LR
         L["Structured Logging\nPipeline status · latency"]
         AN["Anomaly Detection\nEmpty embeddings · missing\nrelationships · data drift"]
-        DASH["📈 Dashboard\nStreamlit / Grafana\n(optional)"]
+        DASH["📈 Dashboard\nStreamlit — pipeline metrics\n+ live recommendation demo"]
         L --- AN --- DASH
     end
 
@@ -94,7 +94,7 @@ flowchart TD
 ```
 User message
   → Ingestion (validate + tag lineage)
-  → Embedding (Sentence-Transformer inference)
+  → Embedding (intfloat/e5-large-v2 — 1024-dim)
   → MongoDB  (store raw text + metadata)
   → Milvus   (upsert 1024-dim vector)
   → Neo4j    (upsert user–campaign–intent edges)
@@ -114,7 +114,7 @@ MongoDB change-stream / polling
 
 ```
 GET /recommendations/<user_id>
-  → Redis  → cache hit?  → return immediately
+  → Redis  → cache hit?  → return immediately (~2ms)
   → Milvus → ANN top-5 similar user embeddings
   → Neo4j  → campaigns connected to those 5 users
   → SQLite → rank campaigns by engagement frequency
@@ -126,8 +126,8 @@ GET /recommendations/<user_id>
 
 ## Component Interaction Matrix
 
-| From \ To    | MongoDB | Milvus | Neo4j | SQLite | Redis | FastAPI |
-|-------------|---------|--------|-------|--------|-------|---------|
+| From \ To       | MongoDB | Milvus | Neo4j | SQLite | Redis | FastAPI |
+|----------------|---------|--------|-------|--------|-------|---------|
 | **Pipeline**    | write   | write  | write | write  | write | —       |
 | **Redis**       | read    | —      | —     | —      | —     | serve   |
 | **FastAPI**     | —       | read   | read  | read   | r/w   | —       |
@@ -135,20 +135,20 @@ GET /recommendations/<user_id>
 
 ---
 
-## Scaling & Fault-Tolerance Indicators
+## Scaling & Fault-Tolerance
 
 ```mermaid
 flowchart LR
     LB["Load Balancer\n(nginx / ALB)"]
 
     subgraph API_POOL["FastAPI Workers  (horizontal scale)"]
-        W1["Worker 1"] 
-        W2["Worker 2"] 
+        W1["Worker 1"]
+        W2["Worker 2"]
         W3["Worker N"]
     end
 
     subgraph DATA["Stateful Services  (vertical + sharding)"]
-        MIL["Milvus Cluster\nIVF_FLAT index\nsharded collections"]
+        MIL["Milvus Cluster\nHNSW index\nsharded collections"]
         NEO["Neo4j Cluster\nread replicas"]
         MON["MongoDB ReplicaSet\n3-node"]
         RD["Redis Cluster\nsentinel HA"]
