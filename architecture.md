@@ -138,7 +138,7 @@ A **Streamlit dashboard** (`dashboard.py`) surfaces all of the above visually �
 The pipeline checks for:
 - **Empty embeddings** — a vector of all zeros (or below a norm threshold) indicates the Sentence-Transformer failed silently.
 - **Missing relationships** — if a user has MongoDB records but no Neo4j node, referential integrity is broken.
-- **Throughput drop** — if records processed per minute drops below a configured threshold, an alert is logged (extensible to PagerDuty/Slack webhook).
+- **Throughput drop** — pipeline run history is tracked in SQLite with `records_in`, `records_ok`, and `records_dlq` counts per run, making it straightforward to detect processing degradation over time.
 
 ---
 

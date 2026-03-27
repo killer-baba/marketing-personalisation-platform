@@ -186,7 +186,7 @@ messages. Kafka's consumer groups allow independent scaling of each processing
 stage.
 
 **Embedding throughput:** a single CPU process can embed ~50 messages/second
-with `intfloat/e5-large-v2`. At 10,000 messages/second, deploy 200 embedding
+with `all-mpnet-base-v2`. At 10,000 messages/second, deploy 200 embedding
 workers — or switch to a GPU inference server (TGI, vLLM) that batches
 requests and achieves 2,000+ embeddings/second on a single A10G GPU.
 
