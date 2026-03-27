@@ -1,0 +1,208 @@
+version: "3.8"
+
+# ─────────────────────────────────────────────
+#  Shared network — all services talk here
+# ─────────────────────────────────────────────
+networks:
+  platform_net:
+    driver: bridge
+
+# ─────────────────────────────────────────────
+#  Named volumes for data persistence
+# ─────────────────────────────────────────────
+volumes:
+  mongodb_data:
+  redis_data:
+  neo4j_data:
+  neo4j_logs:
+  minio_data:
+  etcd_data:
+  milvus_data:
+
+# ─────────────────────────────────────────────
+#  Services
+# ─────────────────────────────────────────────
+services:
+
+  # ── 1. MongoDB ──────────────────────────────
+  mongodb:
+    image: mongo:7
+    container_name: platform_mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin123
+      MONGO_INITDB_DATABASE: conversations
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - platform_net
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── 2. Redis ────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: platform_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass redis123
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - platform_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis123", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── 3. Neo4j ────────────────────────────────
+  neo4j:
+    image: neo4j:5
+    container_name: platform_neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: neo4j/neo4j123
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      NEO4J_dbms_memory_heap_initial__size: 512m
+      NEO4J_dbms_memory_heap_max__size: 1G
+    ports:
+      - "7474:7474"   # Browser UI
+      - "7687:7687"   # Bolt protocol
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    networks:
+      - platform_net
+    healthcheck:
+      test: ["CMD", "neo4j", "status"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 40s
+
+  # ── 4. Milvus dependencies ──────────────────
+  #    Milvus needs etcd (metadata) + minio (object storage)
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    container_name: platform_etcd
+    restart: unless-stopped
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    command: >
+      etcd
+      --advertise-client-urls=http://etcd:2379
+      --listen-client-urls=http://0.0.0.0:2379
+      --data-dir=/etcd
+    volumes:
+      - etcd_data:/etcd
+    networks:
+      - platform_net
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  minio:
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    container_name: platform_minio
+    restart: unless-stopped
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+    command: minio server /minio_data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # MinIO console
+    volumes:
+      - minio_data:/minio_data
+    networks:
+      - platform_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── 5. Milvus ───────────────────────────────
+  milvus:
+    image: milvusdb/milvus:v2.4.0
+    container_name: platform_milvus
+    restart: unless-stopped
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: minioadmin
+      MINIO_SECRET_ACCESS_KEY: minioadmin123
+    ports:
+      - "19530:19530"   # gRPC API
+      - "9091:9091"     # HTTP / metrics
+    volumes:
+      - milvus_data:/var/lib/milvus
+    networks:
+      - platform_net
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 60s
+
+  # ── 6. Pipeline worker ──────────────────────
+  #    Uncomment once src/pipeline is ready
+  # pipeline:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.pipeline
+  #   container_name: platform_pipeline
+  #   restart: on-failure
+  #   env_file: .env
+  #   networks:
+  #     - platform_net
+  #   depends_on:
+  #     mongodb:  { condition: service_healthy }
+  #     redis:    { condition: service_healthy }
+  #     neo4j:    { condition: service_healthy }
+  #     milvus:   { condition: service_healthy }
+
+  # ── 7. FastAPI service ──────────────────────
+  #    Uncomment once src/api is ready
+  # api:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.api
+  #   container_name: platform_api
+  #   restart: unless-stopped
+  #   env_file: .env
+  #   ports:
+  #     - "8000:8000"
+  #   networks:
+  #     - platform_net
+  #   depends_on:
+  #     mongodb:  { condition: service_healthy }
+  #     redis:    { condition: service_healthy }
+  #     neo4j:    { condition: service_healthy }
+  #     milvus:   { condition: service_healthy }
